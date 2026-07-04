@@ -1,0 +1,8 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Links for {{ project }}</title></head>
+<body>
+<h1>Links for {{ project }}</h1>
+{% for link in links %}<a href="{{ link.href }}">{{ link.filename }}</a><br>{% endfor %}
+</body>
+</html>

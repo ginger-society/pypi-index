@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Welcome to Pypi-index!</title>
+</head>
+<body>
+  <h1>Welcome to Pypi-index!</h1>
+  <p>This is a PyPI compatible package index serving {{ num_pkgs }} packages.</p>
+  <p>
+    To use this server with <code>pip</code>, run the following command:
+    <pre><code>pip install --index-url {{ base_url }}simple/ PACKAGE [PACKAGE2...]</code></pre>
+  </p>
+  <p>
+    To use this server with <code>easy_install</code>, run the following command:
+    <pre><code>easy_install --index-url {{ base_url }}simple/ PACKAGE [PACKAGE2...]</code></pre>
+  </p>
+  <p>
+    The complete list of all packages can be found <a href="{{ packages_url }}">here</a>
+    or via the <a href="{{ simple_url }}">simple</a> index.
+  </p>
+  <p>
+    This instance is running version {{ version }} of the
+    <a href="https://github.com/ginger-society/pypi-index">Pypi-index</a> software.
+  </p>
+</body>
+</html>

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ name }} {{ version }}</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #1a1a1a; margin:0; }
+.hero { background: white; border-bottom: 3px solid #0073b7; padding: 40px 20px; }
+.container { max-width: 1000px; margin: 0 auto; }
+.package-name { font-size: 32px; }
+.version-badge { background:#4caf50; color:#fff; padding:4px 12px; border-radius:3px; font-size:14px; margin-left:12px; }
+.install-command { background:#f8f9fa; border:1px solid #dee2e6; border-radius:4px; padding:12px 16px; font-family:monospace; margin-top:16px; display:inline-block; }
+.card { background:white; border:1px solid #e0e0e0; border-radius:4px; padding:20px; margin:20px auto; max-width:1000px; }
+.tag { display:inline-block; background:#f8f9fa; border:1px solid #dee2e6; border-radius:3px; padding:4px 10px; font-size:12px; margin:4px 4px 0 0; }
+</style>
+</head>
+<body>
+<div class="hero"><div class="container">
+  <h1 class="package-name">{{ name }} <span class="version-badge">{{ version }}</span></h1>
+  {% if !summary.is_empty() %}<p>{{ summary }}</p>{% endif %}
+  <div class="install-command">pip install {{ name }}</div>
+</div></div>
+
+<div class="card">
+  <h2>Release History</h2>
+  {% for r in releases %}<div>{{ r.version }} — {{ r.filename }}</div>{% endfor %}
+
+  {% if !requires_dist.is_empty() %}
+  <h2>Dependencies</h2>
+  {% for d in requires_dist %}<div class="tag">{{ d }}</div>{% endfor %}
+  {% endif %}
+
+  {% if !classifiers.is_empty() %}
+  <h2>Classifiers</h2>
+  {% for c in classifiers %}<span class="tag">{{ c }}</span>{% endfor %}
+  {% endif %}
+</div>
+</body>
+</html>
