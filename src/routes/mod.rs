@@ -108,15 +108,40 @@ pub fn simple_project(project: String, _auth: BasicAuth) -> Result<SimpleProject
 
 // ── Package download ─────────────────────────────────────────────────────────
 
+// ── Package download ─────────────────────────────────────────────────────────
+
+/// Wraps a package file so it's always served as a raw binary download
+/// (`application/octet-stream` + `Content-Disposition: attachment`),
+/// instead of whatever Rocket's extension-based guess would produce
+/// (some sdists/wheels otherwise get served as `text/plain`).
+pub struct PackageDownload {
+    file: NamedFile,
+    filename: String,
+}
+
+impl<'r> Responder<'r, 'static> for PackageDownload {
+    fn respond_to(self, req: &'r Request<'_>) -> response::Result<'static> {
+        let filename = self.filename;
+        Response::build_from(self.file.respond_to(req)?)
+            .header(ContentType::Binary)
+            .header(Header::new(
+                "Content-Disposition",
+                format!("attachment; filename=\"{}\"", filename),
+            ))
+            .ok()
+    }
+}
+
 #[get("/packages/<filename>")]
-pub async fn download(filename: String, _auth: BasicAuth) -> Option<NamedFile> {
-    let path = storage::packages_dir().join(&filename);
+pub async fn download(filename: String, _auth: BasicAuth) -> Option<PackageDownload> {
     // Guard against path traversal — reject any filename containing a
     // separator, since PACKAGES_DIR is intentionally flat.
     if filename.contains('/') || filename.contains('\\') {
         return None;
     }
-    NamedFile::open(path).await.ok()
+    let path = storage::packages_dir().join(&filename);
+    let file = NamedFile::open(path).await.ok()?;
+    Some(PackageDownload { file, filename })
 }
 
 // ── Upload ────────────────────────────────────────────────────────────────────
