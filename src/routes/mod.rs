@@ -207,6 +207,12 @@ pub async fn upload(mut form: Form<UploadForm<'_>>, _auth: BasicAuth) -> Result<
     Ok(())
 }
 
+fn public_base_url() -> String {
+    let base_url = std::env::var("PUBLIC_BASE_URL")
+        .unwrap_or_else(|_| "http://localhost:8080/".to_string());
+    if base_url.ends_with('/') { base_url } else { format!("{}/", base_url) }
+}
+
 // ── JSON info (PyPI-compatible /pypi/<project>/json shape, unauthenticated) ──
 
 #[get("/<project>/json", rank = 20)]
@@ -258,6 +264,7 @@ pub struct DetailsTemplate {
     pub classifiers: Vec<String>,
     pub requires_dist: Vec<String>,
     pub releases: Vec<ReleaseView>,
+    pub index_url: String,
 }
 
 impl<'r> Responder<'r, 'static> for DetailsTemplate {
@@ -266,12 +273,13 @@ impl<'r> Responder<'r, 'static> for DetailsTemplate {
         Response::build().header(ContentType::HTML).sized_body(html.len(), Cursor::new(html)).ok()
     }
 }
-
 #[get("/details/<project>")]
 pub fn package_details(project: String, cookies: &CookieJar<'_>) -> PageOrRedirect<DetailsTemplate> {
     if let Err(redirect) = crate::auth::require_auth(cookies, &format!("/details/{}", project)) {
         return PageOrRedirect::Redirect(redirect);
     }
+
+    let index_url = format!("{}simple/", public_base_url());
 
     let mut packages = storage::find_project_packages(&project);
     if packages.is_empty() {
@@ -285,6 +293,7 @@ pub fn package_details(project: String, cookies: &CookieJar<'_>) -> PageOrRedire
             classifiers: vec![],
             requires_dist: vec![],
             releases: vec![],
+            index_url,
         });
     }
     packages.sort_by(|a, b| b.version.cmp(&a.version));
@@ -306,6 +315,7 @@ pub fn package_details(project: String, cookies: &CookieJar<'_>) -> PageOrRedire
         classifiers: meta.classifiers.unwrap_or_default(),
         requires_dist: meta.requires_dist.unwrap_or_default(),
         releases,
+        index_url,
     })
 }
 
