@@ -12,11 +12,14 @@ use serde_json::Value;
 
 use rocket::http::{ContentType};
 use rocket::response::{self, Responder};
-use rocket::{Request, Response};
+use rocket::{Request, Response, State};
 use std::io::Cursor;
 use std::path::PathBuf;
 use rocket::form::{Form, FromForm};
 use rocket::http::Header;
+
+use crate::publish_rabbit::{self, PublishRabbitPoolRef};
+use crate::pypi_push;
 
 
 pub struct Unauthorized;
@@ -47,6 +50,24 @@ impl<'r, T: Responder<'r, 'static>> Responder<'r, 'static> for PageOrRedirect<T>
             PageOrRedirect::Redirect(r) => r.respond_to(req),
         }
     }
+}
+
+/// Projects approved to be mirrored out to the public PyPI (or another
+/// Warehouse-compatible index), read from the same `SYNC_PACKAGES` env var
+/// the (now-retired) `public-registry-publisher push-py` CLI used, so the
+/// allowlist doesn't need to move anywhere. Re-read on every upload rather
+/// than cached at startup — this is a low-frequency path and it lets the
+/// allowlist be updated without restarting the index server.
+///
+/// Compared by exact string match against the `Name` field parsed out of
+/// the distribution's own metadata. PyPI normalizes project names
+/// (case-insensitive, `-`/`_`/`.` treated the same) — if your SYNC_PACKAGES
+/// entries don't already match the casing/punctuation your build tool emits
+/// in PKG-INFO/METADATA, normalize both sides before comparing.
+fn should_sync_to_public_registry(name: &str) -> bool {
+    std::env::var("SYNC_PACKAGES")
+        .map(|raw| raw.split(',').map(|s| s.trim()).any(|pkg| pkg == name))
+        .unwrap_or(false)
 }
 
 // ── Simple index (PEP 503) ──────────────────────────────────────────────────
@@ -108,8 +129,6 @@ pub fn simple_project(project: String, _auth: BasicAuth) -> Result<SimpleProject
 
 // ── Package download ─────────────────────────────────────────────────────────
 
-// ── Package download ─────────────────────────────────────────────────────────
-
 /// Wraps a package file so it's always served as a raw binary download
 /// (`application/octet-stream` + `Content-Disposition: attachment`),
 /// instead of whatever Rocket's extension-based guess would produce
@@ -162,7 +181,11 @@ pub struct UploadForm<'r> {
 }
 
 #[post("/", data = "<form>")]
-pub async fn upload(mut form: Form<UploadForm<'_>>, _auth: BasicAuth) -> Result<(), Status> {
+pub async fn upload(
+    mut form: Form<UploadForm<'_>>,
+    _auth: BasicAuth,
+    rabbit_pool: &State<PublishRabbitPoolRef>,
+) -> Result<(), Status> {
     if form.action != "file_upload" {
         // Matches update()'s behavior for "verify"/"submit": ignored, not
         // an error. Anything else genuinely unsupported is a 400.
@@ -203,6 +226,55 @@ pub async fn upload(mut form: Form<UploadForm<'_>>, _auth: BasicAuth) -> Result<
     };
     let sidecar = format!("{}.metadata.json", dest.display());
     let _ = std::fs::write(sidecar, serde_json::to_string(&metadata).unwrap_or_default());
+
+    // Fire a "ready to push" event for the public PyPI mirror consumer, but
+    // only for allowlisted projects, and only once the file (and its
+    // sidecar) are safely on disk. The project name is derived from the
+    // dist file's own PKG-INFO/METADATA here (the client-supplied `name`
+    // form field is optional and not always trustworthy) so the
+    // SYNC_PACKAGES check matches exactly what push_consumer.rs will see
+    // when it re-parses the same file. Parsing runs on a blocking thread
+    // since sdist/wheel parsing does synchronous file + archive I/O; a
+    // parse failure here just means the event isn't queued — the upload
+    // itself has already succeeded and isn't rolled back.
+    let dest_for_parse = dest.clone();
+    let parse_result = rocket::tokio::task::spawn_blocking(move || pypi_push::read_dist_file(&dest_for_parse))
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    match parse_result {
+        Ok(dist) => {
+            if let Some(project_name) = dist.metadata.single.get("Name").cloned() {
+                if should_sync_to_public_registry(&project_name) {
+                    let message_body = serde_json::json!({
+                        "event": "pypi_package_published",
+                        "project": project_name,
+                        "filename": filename,
+                    })
+                    .to_string();
+
+                    let routing_key = format!("pypi.publish.{}", project_name.replace('/', "."));
+                    publish_rabbit::publish_pypi_ready_event(
+                        rabbit_pool.inner(),
+                        &routing_key,
+                        &message_body,
+                    )
+                    .await;
+                }
+            } else {
+                eprintln!(
+                    "[pypi-upload] parsed {} but found no 'Name' in metadata, not queuing for public push",
+                    filename
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "[pypi-upload] uploaded {} but failed to parse it for the public-push allowlist check: {:#}",
+                filename, e
+            );
+        }
+    }
 
     Ok(())
 }
