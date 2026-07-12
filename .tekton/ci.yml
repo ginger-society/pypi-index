@@ -1,105 +1,85 @@
 apiVersion: tekton.dev/v1beta1
-kind: Task
+kind: Pipeline
 metadata:
-  name: build-image-and-push-to-container-registry
-  namespace: tasks-ginger-kube-service
+  name: build-pipeline
   annotations:
-    x-ginger-task-namespace: "ginger-kube-service"  # Custom annotation
-    x-ginger-task-trigger-branch: '["refs/heads/main"]'  # Allowed branches
-
+    x-gitter-trigger-branch: '["refs/heads/main", "refs/heads/dev-*"]'
+    x-gitter-enabled: "true"
 spec:
-  workspaces:
-      - name: source
-      - name: ssh-credentials  # Store SSH keys
-      - name: ssh-config  # Store SSH setup
-      - name: kubeconfig
-      - name: buildah-cache  # Workspace for caching
-      - name: pipeline-secrets
-      - name: general-purpose-cache
-  steps:
-    - name: clone
-      image: containers.gingersociety.org/secure-git-task-runner:latest
-      script: |
-        #!/bin/sh
-        set -e  # Exit on error
+  params:
+    - name: image_tag
+      type: string
+    - name: binaries_to_build
+      type: string
+      default: "PIPRegistry"
 
-        /usr/local/bin/configurator.sh
-        
-        git config --global init.defaultBranch main
-        git clone git@source.gingersociety.org:ginger-kube-service.git /workspace/source/repo
-        echo "Repository cloned successfully."
+  tasks:
+    - name: ginger-connector-setup
+      runAfter:
+        - clone
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: ginger-connector-setup
+          - name: namespace
+            value: default
 
-    - name: debug
-      image: alpine
-      script: |
-        #!/bin/sh
-        set -e  # Exit on error
-        cd /workspace/source/repo
-        ls -la .
+    - name: build-amd64-linux
+      runAfter:
+        - ginger-connector-setup
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: build-amd64-linux
+          - name: namespace
+            value: default
+      params:
+        - name: binaries_to_build
+          value: "$(params.binaries_to_build)"
 
-    - name: build
-      image: containers.gingersociety.org/enhanced-buildah:latest
-      script: |
-        #!/bin/sh
-        set -e  # Exit on error
+    - name: push-pip-registry-image
+      runAfter:
+        - build-amd64-linux
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: build-and-push-image
+          - name: namespace
+            value: default
+      params:
+        - name: image_tag
+          value: "$(params.image_tag)"
+        - name: org_id
+          value: "$(params.org_id)"
+        - name: image_name
+          value: "pip-registry"
+        - name: binary_name
+          value: "PIPRegistry"
+        - name: entrypoint
+          value: '"/usr/local/bin/PIPRegistry"'
+        - name: base_image
+          value: "docker.io/gingersociety/rust-rocket-api-runner:latest"
+        - name: extra_copy_src
+          value: "./Rocket.toml"
+        - name: extra_copy_dest
+          value: "/Rocket.toml"
 
-        /usr/local/bin/configurator_buildah.sh
-
-        echo "Loading secrets from workspace..."
-        export DOCKER_USERNAME=$(cat /workspace/pipeline-secrets/DOCKER_USERNAME)
-        export DOCKER_PASSWORD=$(cat /workspace/pipeline-secrets/DOCKER_PASSWORD)
-        export GINGER_TOKEN=$(cat /workspace/pipeline-secrets/GINGER_TOKEN)
-
-        echo "DOCKER_USERNAME=$DOCKER_USERNAME"
-        echo "DOCKER_PASSWORD=$DOCKER_PASSWORD"
-        echo "GINGER_TOKEN=$GINGER_TOKEN"
-
-        echo "Logging into container registry..."
-        echo "$DOCKER_PASSWORD" | buildah login --username "$DOCKER_USERNAME" --password-stdin containers.gingersociety.org
-
-        cd /workspace/source/repo
-        echo "Building db runtime image with Buildah"
-        buildah bud \
-          --build-arg GINGER_TOKEN=$GINGER_TOKEN \
-          --isolation=chroot \
-          --storage-driver=vfs \
-          -t containers.gingersociety.org/gingersociety/ginger-kube-service:latest \
-          --root=$CONTAINERS_STORAGE \
-          .
-
-        buildah push containers.gingersociety.org/gingersociety/ginger-kube-service:latest
-
-      securityContext:
-        privileged: true
-
-
-    - name: restart-deployment
-      image: containers.gingersociety.org/secure-git-task-runner:latest
-      script: |
-        #!/bin/sh
-        set -e
-        echo "🔹 Setting KUBECONFIG..."
-        cp -r /workspace/kubeconfig /keys
-        export KUBECONFIG=/workspace/kubeconfig/kubeconfig.gingersociety.prod.yml
-        echo "Rolling out restart"
-        kubectl rollout restart deployment ginger-kube-deployment \
-          -n default
-
-    - name: publish-metadata
-      image: containers.gingersociety.org/rust-rocket-api-builder:latest
-      script: |
-        #!/bin/sh
-        set -e
-
-        echo "Waiting 10 seconds before publishing metadata..."
-        sleep 10
-
-        echo "Logging in using ginger-auth..."
-        export GINGER_TOKEN=$(cat /workspace/pipeline-secrets/GINGER_TOKEN)
-        ginger-auth token-login "$GINGER_TOKEN"
-
-        echo "Publishing metadata to prod..."
-        ginger-connector publish prod
-
-        echo "Publishing metadata to stage..."
-        ginger-connector publish stage
+    - name: notify-version-update
+      runAfter:
+        - push-pip-registry-image
+      taskSpec:
+        steps:
+          - name: echo
+            image: alpine
+            script: |
+              #!/bin/sh
+              echo "Hello World - all previous tasks are done!"
