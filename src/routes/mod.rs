@@ -212,7 +212,13 @@ pub async fn upload(
         return Err(Status::Conflict);
     }
 
-    content.persist_to(&dest).await.map_err(|_| Status::InternalServerError)?;
+    content
+    .persist_to(&dest)
+        .await
+        .map_err(|e| {
+            eprintln!("[upload] persist_to failed for {:?}: {:#}", dest, e);
+            Status::InternalServerError
+        })?;
 
     let metadata = storage::PackageMetadata {
         name: form.name.clone(),
