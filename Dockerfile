@@ -24,6 +24,7 @@ RUN curl -LO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/sta
 
 # Copy the compiled binary from the builder stage
 COPY --from=builder /app/target/release/PIPRegistry /app/
+COPY --from=builder /app/Rocket.toml /app/
 
 # Set the working directory
 WORKDIR /app
