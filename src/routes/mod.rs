@@ -212,13 +212,19 @@ pub async fn upload(
         return Err(Status::Conflict);
     }
 
-    content
-    .persist_to(&dest)
-        .await
-        .map_err(|e| {
-            eprintln!("[upload] persist_to failed for {:?}: {:#}", dest, e);
-            Status::InternalServerError
-        })?;
+    if let Err(e) = content.persist_to(&dest).await {
+        eprintln!("[upload] persist_to failed for {:?}: {:#}, trying copy fallback", dest, e);
+        let tmp_path = content.path().ok_or(Status::InternalServerError)?;
+        rocket::tokio::fs::copy(tmp_path, &dest)
+            .await
+            .map_err(|e2| {
+                eprintln!("[upload] copy fallback also failed: {:#}", e2);
+                Status::InternalServerError
+            })?;
+        // TempFile normally deletes its own backing file on drop once persisted;
+        // since we bypassed persist_to, clean up the staged temp file ourselves.
+        let _ = rocket::tokio::fs::remove_file(tmp_path).await;
+    }
 
     let metadata = storage::PackageMetadata {
         name: form.name.clone(),

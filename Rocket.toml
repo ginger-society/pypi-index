@@ -1,13 +1,14 @@
 [debug]
-# You should generate your own by "openssl rand -base64 32"
 address = "0.0.0.0"
 port = 8089
 secret_key = "Yuvzw+jJ4yzKHi/JwHFl1y4X6Tjn/WrskHOWrlvt/L0="
+temp_dir = "/data/tmp"
 limits = { bytes = "20MB", data-form = "20MB", file = "20MB", form = "20MB", "file/chunk" = "20MB" }
 
 [release]
 address = "0.0.0.0"
 keep_alive = 5
+temp_dir = "/data/tmp"
 limits = { forms = 32768, bytes = "20MB", data-form = "20MB", file = "20MB", form = "20MB", "file/chunk" = "20MB" }
 log_level = "critical"
 port = 8080
